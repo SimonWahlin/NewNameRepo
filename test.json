@@ -1,0 +1,267 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep (Bicep PowerShell 2.0.0)",
+      "version": "0.4.451.19169",
+      "templateHash": "11047699363530618654"
+    }
+  },
+  "parameters": {
+    "systemName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name that will be common for all resources created"
+      }
+    },
+    "appSettings": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Key-Value pairs representing custom app settings"
+      }
+    },
+    "storageAccountSku": {
+      "type": "string",
+      "defaultValue": "Standard_LRS",
+      "metadata": {
+        "description": "Storage account SKU for dedicated storage account"
+      },
+      "allowedValues": [
+        "Standard_LRS",
+        "Standard_GRS",
+        "Standard_RAGRS",
+        "Standard_ZRS",
+        "Premium_LRS",
+        "Premium_ZRS",
+        "Standard_GZRS",
+        "Standard_RAGZRS"
+      ]
+    },
+    "logRetentionInDays": {
+      "type": "int",
+      "defaultValue": 90,
+      "metadata": {
+        "description": "Number of days logs will be kept in log analytics. Valid values are 30-730"
+      }
+    },
+    "logDailyQuotaGb": {
+      "type": "int",
+      "defaultValue": 0,
+      "metadata": {
+        "description": "The workspace daily quota limit for ingestion. Set to 0 for no limit (default=0)"
+      }
+    },
+    "appInsightsSamplingPercentage": {
+      "type": "int",
+      "defaultValue": 100,
+      "metadata": {
+        "description": "Percentage of the data produced by the application being monitored that is being sampled for Application Insights telemetry."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {}
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    }
+  },
+  "functions": [],
+  "variables": {
+    "functionAppName": "[parameters('systemName')]",
+    "hostingPlanName": "[format('{0}-plan', parameters('systemName'))]",
+    "logAnalyticsName": "[format('{0}-log', parameters('systemName'))]",
+    "applicationInsightsName": "[format('{0}-appin', parameters('systemName'))]",
+    "systemNameNoDash": "[replace(parameters('systemName'), '-', '')]",
+    "uniqueStringRg": "[uniqueString(resourceGroup().id)]",
+    "storageAccountName": "[toLower(format('{0}{1}sa', take(variables('systemNameNoDash'), 17), take(variables('uniqueStringRg'), 5)))]",
+    "keyVaultName": "[toLower(format('{0}{1}kv', take(variables('systemNameNoDash'), 17), take(variables('uniqueStringRg'), 5)))]",
+    "storageConnectionStringName": "[format('{0}-connectionstring', parameters('systemName'))]",
+    "appInsightsInstrumentationKeyName": "[format('{0}-instrumentationkey', parameters('systemName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2021-02-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "[parameters('storageAccountSku')]"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "supportsHttpsTrafficOnly": true,
+        "accessTier": "Hot",
+        "allowBlobPublicAccess": false,
+        "minimumTlsVersion": "TLS1_2",
+        "allowSharedKeyAccess": true
+      },
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('hostingPlanName')]",
+      "location": "[parameters('location')]",
+      "kind": "elastic",
+      "sku": {
+        "name": "Y1"
+      },
+      "properties": {
+        "reserved": false
+      },
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('functionAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "enabled": true,
+        "httpsOnly": true,
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "clientCertEnabled": false,
+        "siteConfig": {
+          "ftpsState": "Disabled",
+          "minTlsVersion": "1.2",
+          "powerShellVersion": "~7",
+          "scmType": "None"
+        },
+        "containerSize": 1536
+      },
+      "tags": "[parameters('tags')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/appsettings', variables('functionAppName'))]",
+      "properties": "[union(parameters('appSettings'), createObject('AzureWebJobsSecretStorageKeyVaultName', variables('keyVaultName'), 'AzureWebJobsSecretStorageType', 'keyvault', 'AzureWebJobsSecretStorageKeyVaultConnectionString', '', 'AzureWebJobsStorage', format('@Microsoft.KeyVault(SecretUri={0})', reference(resourceId('Microsoft.KeyVault/vaults/secrets', split(format('{0}/{1}', variables('keyVaultName'), variables('storageConnectionStringName')), '/')[0], split(format('{0}/{1}', variables('keyVaultName'), variables('storageConnectionStringName')), '/')[1])).secretUri), 'WEBSITE_CONTENTSHARE', toLower(variables('functionAppName')), 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', format('@Microsoft.KeyVault(SecretUri={0})', reference(resourceId('Microsoft.KeyVault/vaults/secrets', split(format('{0}/{1}', variables('keyVaultName'), variables('storageConnectionStringName')), '/')[0], split(format('{0}/{1}', variables('keyVaultName'), variables('storageConnectionStringName')), '/')[1])).secretUri), 'FUNCTIONS_EXTENSION_VERSION', '~3', 'APPINSIGHTS_INSTRUMENTATIONKEY', format('@Microsoft.KeyVault(SecretUri={0})', reference(resourceId('Microsoft.KeyVault/vaults/secrets', split(format('{0}/{1}', variables('keyVaultName'), variables('appInsightsInstrumentationKeyName')), '/')[0], split(format('{0}/{1}', variables('keyVaultName'), variables('appInsightsInstrumentationKeyName')), '/')[1])).secretUri), 'AzureWebJobsDisableHomepage', true(), 'FUNCTIONS_APP_EDIT_MODE', 'readonly', 'WEBSITE_RUN_FROM_PACKAGE', '1', 'FUNCTIONS_WORKER_RUNTIME', 'powershell', 'FUNCTIONS_WORKER_RUNTIME_VERSION', '~7', 'FUNCTIONS_WORKER_PROCESS_COUNT', 10, 'PSWorkerInProcConcurrencyUpperBound', 1))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', split(format('{0}/{1}', variables('keyVaultName'), variables('appInsightsInstrumentationKeyName')), '/')[0], split(format('{0}/{1}', variables('keyVaultName'), variables('appInsightsInstrumentationKeyName')), '/')[1])]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', split(format('{0}/{1}', variables('keyVaultName'), variables('storageConnectionStringName')), '/')[0], split(format('{0}/{1}', variables('keyVaultName'), variables('storageConnectionStringName')), '/')[1])]"
+      ]
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2020-08-01",
+      "name": "[variables('logAnalyticsName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": "[parameters('logRetentionInDays')]",
+        "workspaceCapping": "[if(equals(parameters('logDailyQuotaGb'), 0), json('null'), createObject('dailyQuotaGb', parameters('logDailyQuotaGb')))]"
+      },
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02-preview",
+      "name": "[variables('applicationInsightsName')]",
+      "location": "[parameters('location')]",
+      "kind": "web",
+      "tags": "[union(parameters('tags'), createObject(format('hidden-link:{0}', resourceId('Microsoft.Web/sites', variables('functionAppName'))), 'Resource'))]",
+      "properties": {
+        "Application_Type": "web",
+        "Flow_Type": "Bluefield",
+        "Request_Source": "rest",
+        "SamplingPercentage": "[parameters('appInsightsSamplingPercentage')]",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2019-09-01",
+      "name": "[variables('keyVaultName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "enabledForDeployment": false,
+        "enabledForTemplateDeployment": false,
+        "enabledForDiskEncryption": false,
+        "tenantId": "[subscription().tenantId]",
+        "accessPolicies": [
+          {
+            "tenantId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2020-12-01', 'full').identity.tenantId]",
+            "objectId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2020-12-01', 'full').identity.principalId]",
+            "permissions": {
+              "secrets": [
+                "get",
+                "list",
+                "set"
+              ]
+            }
+          }
+        ],
+        "sku": {
+          "name": "standard",
+          "family": "A"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2019-09-01",
+      "name": "[format('{0}/{1}', variables('keyVaultName'), variables('storageConnectionStringName'))]",
+      "properties": {
+        "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1}', variables('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2019-06-01').keys[0].value)]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2019-09-01",
+      "name": "[format('{0}/{1}', variables('keyVaultName'), variables('appInsightsInstrumentationKeyName'))]",
+      "properties": {
+        "value": "[reference(resourceId('Microsoft.Insights/components', variables('applicationInsightsName')), '2020-02-02-preview').InstrumentationKey]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/components', variables('applicationInsightsName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/extensions",
+      "apiVersion": "2015-08-01",
+      "name": "[format('{0}/{1}', variables('functionAppName'), 'ZipDeploy')]",
+      "properties": {
+        "packageUri": "https://github.com/MSEndpointMgr/CloudLAPS/releases/download/1.0.0/CloudLAPS-FunctionApp1.0.0.zip"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "FunctionAppName": {
+      "type": "string",
+      "value": "[variables('functionAppName')]"
+    },
+    "StorageAccountName": {
+      "type": "string",
+      "value": "[variables('storageAccountName')]"
+    }
+  }
+}
